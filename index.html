@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Outpost Zero – Mars Mission Trainer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#1b1a2e;--pn:#26243d;--tx:#f1ecf5;--mu:#a9a3bd;--ac:#7fd0e8;--wr:#e8935f;--ok:#8fd694;--bd:#3a3758;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#f3eef6;--pn:#fff;--tx:#221f33;--mu:#625c78;--ac:#0b6a8a;--wr:#b4521f;--ok:#2d7a37;--bd:#d6cfe2}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 "Trebuchet MS",ui-rounded,system-ui,sans-serif}
+main{max-width:980px;margin:auto;padding:14px}h1{font-size:1.5rem;margin:.2em 0}h2{font-size:1.1rem;margin:.4em 0}
+.sub,small{color:var(--mu)}.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.card{background:var(--pn);border:1px solid var(--bd);border-radius:10px;padding:10px}
+button,select{font:inherit;color:var(--tx);background:var(--pn);border:1px solid var(--ac);border-radius:8px;padding:6px 12px;cursor:pointer;min-height:40px}
+button:hover{background:var(--ac);color:#10101c}button:disabled{opacity:.4}button:focus-visible{outline:3px solid var(--wr)}
+button.go,button.on{background:var(--ac);color:#10101c;font-weight:700}.sm{min-height:0;padding:0 7px;font-size:.78rem}
+.row{display:flex;justify-content:space-between;gap:6px;align-items:center;margin:3px 0}.bar{height:9px;background:var(--bd);border-radius:5px;overflow:hidden}.bar i{display:block;height:100%;background:var(--ok)}
+.R{color:var(--ok)}.D{color:var(--ac)}.A{color:var(--wr)}.alert{border-color:var(--wr)}canvas{width:100%;height:150px;display:block}
+#log{max-height:130px;overflow:auto;font-size:.85rem;color:var(--mu)}table{border-collapse:collapse;font-size:.8rem}td{padding:1px 8px 1px 0}
+</style></head><body><main id="app"></main>
+<script>
+const $=s=>document.querySelector(s),A=$('#app'),DAYS=30,N=4;
+const SITES=[
+{n:'Gale Crater',sun:.95,ice:0,rad:.9,tm:-55,cost:1,t:'Real radiation data exists here (Curiosity RAD). Little buried ice.'},
+{n:'Arcadia Planitia',sun:.65,ice:1,rad:1,tm:-68,cost:1,t:'Mid-latitude plain flagged ice-rich by NASA SWIM. Weaker, colder.'},
+{n:'Deuteronilus Mensae',sun:.7,ice:1,rad:1,tm:-66,cost:1.15,t:'Glacier-like terrain flagged by SWIM. Rough ground raises costs.'},
+{n:'Equatorial plain (placeholder)',sun:1,ice:0,rad:1.1,tm:-52,cost:1,t:'Most sunlight, no ice. Stand-in until official data arrives.'}];
+const WHY={
+dust:['Mars dust blocks sunlight. Big storms can last weeks, and dust also settles on panels.','Dust opacity (tau) is about 0.5 on a clear day and can exceed 3 in big storms, cutting sunlight at the surface a lot. Here sunlight = exp(-0.4·(tau−0.5)); a derived model, not a forecast.','Two effects: atmospheric attenuation (tau) and panel soiling (accumulates ∝ tau, reset by cleaning). Storms also shrink the day-night temperature swing. All coefficients are abstractions.'],
+power:['Panels make power only in daylight. Batteries cover the night and storms.','Every system draws power in a fixed priority. When supply runs short, lower-priority systems shut down first, then life support.','Supply = panels × peak × irradiance × (1−soiling). Demand = sum of loads. Battery bounded by capacity, 92% charge efficiency. Priority: life support, CO2 scrubber, oxygen maker, heater, recycler, ice miner, greenhouse.'],
+air:['People breathe in oxygen and out CO2. Machines fix the air, and they need power.','The scrubber removes CO2; electrolysis splits water into oxygen. Plants help too, but only if they have light and warmth.','Crew rates use approximate NASA life-support values (about 0.84 kg O2 and 1 kg CO2 per person per day); verify against NASA BVAD before citing. Cabin CO2 is tracked as ppm, an abstraction.'],
+rad:['Mars has little air or magnetic shield, so radiation reaches the ground. Walls and shelters help.','Curiosity\'s RAD measured about 0.64 mSv/day on the surface and saw spikes during solar particle events. Water or soil on top absorbs part of it.','Base rate uses the Gale RAD value (REAL, other sites modeled). Solar particle events are random and scaled up as gameplay. The meter limit is an abstraction, not a medical dose limit.'],
+water:['Water is for drinking, air, and plants. Recycle it or find more.','The recycler gets most water back but needs power and can break. Ice maps (NASA SWIM) show where mining may pay off.','Net water = tank − crew use×(1−recycle efficiency) − electrolysis − plant use + ice income. Recycle efficiency 85% is a modeled value.']};
+const SF=[1,.55,.35],INS=[1,.85,.6];
+let S,cfg,site,lv=0,timer,speed=0,seed=1;
+const why=k=>`<button class="sm" onclick="showWhy('${k}')">Why?</button>`;
+function showWhy(k){$('#why').innerHTML=`<div class="card"><b>Why it matters</b> ${['Rookie','Explorer','Engineer'].map((x,i)=>`<button class="sm ${i==lv?'on':''}" onclick="lv=${i};showWhy('${k}')">${x}</button>`).join(' ')}<p>${WHY[k][lv]}</p></div>`}
+function pick(){A.innerHTML=`<h1>Outpost Zero</h1><p class="sub">Run a 4-person Mars outpost for ${DAYS} sols in a live hour-by-hour simulation. Sunlight, dust, temperature, air, water, food, power and radiation all affect each other. Pick a site, spend a limited budget, then manage the outpost as conditions change.</p><div class="grid">${SITES.map((s,i)=>`<div class="card"><b>${s.n}</b><div class="row"><span>Sunlight</span><b>${Math.round(s.sun*100)}%</b></div><div class="row"><span>Buried ice</span><b>${['Low','Likely'][s.ice]}</b></div><div class="row"><span>Mean temp</span><b>${s.tm}°C</b></div><small>${s.t}</small><p><button class="go" onclick="build(${i})">Land here</button></p></div>`).join('')}</div><details class="card"><summary>Data behind this</summary><table><tr><td class="R">REAL</td><td>Surface radiation about 0.64 mSv/day (Curiosity RAD, Gale Crater); SWIM ice likelihood findings</td></tr><tr><td class="D">DERIVED</td><td>Sunlight from latitude; dust attenuation from opacity; crew O2/CO2 rates (approximate NASA life-support values, to verify)</td></tr><tr><td class="A">ABSTRACTION</td><td>Costs, panel/battery sizes, failure rates, radiation meter, temperatures by site, storm timing</td></tr></table></details><div id="why"></div>`}
+const price=()=>Math.round((cfg.p*5+cfg.b*8+[0,12,22][cfg.s]+cfg.g*18+cfg.r*14+cfg.k*4+cfg.d*12+cfg.x*14)*site.cost);
+function build(i){site=SITES[i];cfg={p:8,b:3,s:0,g:0,r:1,k:1,d:0,x:0};drawB()}
+function drawB(){const c=cfg,left=140-price(),st=(k,l,mx,u)=>`<div class="card"><div class="row"><span>${l}</span><span><button class="sm" onclick="cfg.${k}=Math.max(0,cfg.${k}-1);drawB()">−</button> <b>${c[k]}</b> <button class="sm" onclick="cfg.${k}=Math.min(${mx},cfg.${k}+1);drawB()">+</button></span></div><small>${u}</small></div>`;
+A.innerHTML=`<h1>${site.n}</h1><p class="sub">Budget left <b style="color:${left<0?'var(--wr)':'var(--ok)'}">${left}</b> of 140. Seed <input id="seed" type="number" value="${seed}" style="width:80px;font:inherit"> (same seed = same weather, so you can compare designs).</p><div class="grid">${st('p','Solar panels (5)',14,'4 kW peak each. Make power only in daylight; dust soils them.')}${st('b','Batteries (8)',6,'25 kWh each. Cover nights and storms.')}${st('g','Greenhouse (18)',1,'Grows food, adds oxygen, uses power, light and water.')}${st('r','Water recycler (14)',1,'Reclaims most crew water; uses power; can break.')}${st('x','Ice miner (14)',1,'Adds water on ice sites; uses power.')}${st('k','Spare parts (4)',4,'One part repairs one broken system.')}${st('d','Backup life-support (12)',1,'Takes over once if the scrubber or oxygen maker fails.')}<div class="card"><div class="row"><span>Shielding</span><select onchange="cfg.s=+this.value;drawB()"><option value=0>None</option><option value=1 ${c.s==1?'selected':''}>Water walls (12)</option><option value=2 ${c.s==2?'selected':''}>Regolith (22)</option></select></div><small>Water walls use 100 kg of your water. Regolith insulates well but is heavy work. ${why('rad')}</small></div></div><p><button onclick="pick()">Back</button> <button class="go" ${left<0?'disabled':''} onclick="start()">Start mission</button></p><div id="why"></div>`}
+function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function start(){seed=+($('#seed')||{value:1}).value||1;S={r:rng(seed),t:0,tau:.5,cover:0,storm:0,stEnd:0,spe:0,speEnd:0,tin:20,set:20,bat:cfg.b*25*.7+10,o2:60,co2:.2,h2o:300-(cfg.s==1?100:0),food:100,hp:100,dose:0,parts:cfg.k,fail:{},red:cfg.d,rep:null,gh:cfg.g,ex:cfg.x,sh:0,hist:[],log:[],fl:{},dmg:{},clean:-99,ph:{}};speed=1;layout();clearInterval(timer);timer=setInterval(frame,100)}
+function layout(){A.innerHTML=`<div class="row"><h1 id="hd"></h1><span><button onclick="spd(0)" id="s0">Pause</button> <button onclick="spd(1)" id="s1" class="on">1×</button> <button onclick="spd(2)" id="s2">4×</button> <button onclick="spd(3)" id="s3">20×</button></span></div><div class="grid" id="st"></div><div class="card"><canvas id="cv" width="900" height="150"></canvas><small>Green: power made (kW) · Orange: power used (kW) · Blue: battery % · Gray: dust opacity</small></div><div class="grid"><div class="card"><b>Controls</b><div class="row"><span>Heater set <b id="sv">20</b>°C</span><input type="range" min="10" max="24" value="20" oninput="S.set=+this.value;$('#sv').textContent=this.value"></div><div class="row"><button id="bg" onclick="S.gh=!S.gh;S.gh=+S.gh&&cfg.g" ${cfg.g?'':'disabled'}>Greenhouse lights</button><button id="bx" onclick="S.ex=+!S.ex&&cfg.x" ${cfg.x?'':'disabled'}>Ice miner</button></div><div class="row"><button onclick="cleanP()">Clean panels</button><button id="bs" onclick="S.sh=+!S.sh">Shelter crew</button><button onclick="repair()">Repair</button></div></div><div class="card"><b>Mission log</b><div id="log"></div></div></div><div id="why" style="margin-top:8px"></div><span id="ws">${['dust','power','air','rad','water'].map(why).join(' ')}</span>`}
+function spd(i){speed=i;[0,1,2,3].forEach(j=>$('#s'+j).className=j==i?'on':'')}
+function lg(m){S.log.unshift(`Sol ${Math.floor(S.t/24)+1} ${String(S.t%24).padStart(2,'0')}:00 — ${m}`);S.rec=(S.rec||[]);S.rec.push([S.t,m])}
+function fl(k,c,m){if(c&&!S.fl[k])lg(m);S.fl[k]=c}
+function cleanP(){if(S.t-S.clean<24){return}S.clean=S.t;S.cover=0;lg('Panels cleaned')}
+function repair(){const k=Object.keys(S.fail).find(x=>S.fail[x]);if(!k||S.rep)return;if(S.parts<1){lg('No spare parts left')}else{S.parts--;S.rep={k,u:S.t+6};lg('Repairing '+k)}}
+function brk(k){if(S.red&&(k=='scr'||k=='oga')){S.red=0;lg('Backup took over from failed '+k)}else{S.fail[k]=1;lg(k+' failed')}}
+function step(){const s=S,r=s.r,h=s.t%24,st=SITES.indexOf(site)<0?site:site;
+if(!s.storm&&r()<.0022){s.storm=1;s.stEnd=s.t+48+r()*96;lg('Dust storm building')}
+if(s.storm&&s.t>s.stEnd){s.storm=0;lg('Storm is fading')}
+s.tau=Math.max(.2,s.tau+((s.storm?3.5:.5)-s.tau)*(s.storm?.03:.004)+(r()-.5)*.01);s.cover=Math.min(.7,s.cover+.00035*s.tau);
+if(!s.spe&&r()<.0012){s.spe=1;s.speEnd=s.t+18+r()*10;lg('Solar particle event: radiation rising')}
+if(s.spe&&s.t>s.speEnd){s.spe=0;lg('Particle event over')}
+if(s.rep&&s.t>=s.rep.u){s.fail[s.rep.k]=0;lg(s.rep.k+' repaired');s.rep=null}
+for(const k of['scr','oga','rec','heat'])if(!s.fail[k]&&r()<.0005*(1+s.cover))brk(k);
+const T=Math.min(1,Math.exp(-(s.tau-.5)*.4)),irr=site.sun*(h>=6&&h<18?Math.sin(Math.PI*(h-6)/12):0)*T,gen=cfg.p*4*irr*(1-s.cover*.8);
+const Ta=site.tm+40*(.6+.4*T)*Math.sin(2*Math.PI*(h-9.5)/24),U=.022*INS[cfg.s];
+const oN=s.o2<80&&!s.fail.oga,gl=s.gh&&!s.sh&&h>=4&&h<20;
+const heat=Math.min(4,Math.max(0,U*(s.set-Ta)+1.5*(s.set-s.tin)));
+const L=[['life',1],['scr',s.fail.scr?0:.6],['oga',oN?1:0],['heat',s.fail.heat?0:heat],['rec',cfg.r&&!s.fail.rec?.5:0],['ex',s.ex?1.5:0],['gh',gl?2:0]];
+let av=gen+Math.min(s.bat,8),used=0,g={};for(const[k,d]of L){const f=d>0?Math.min(1,Math.max(0,(av-used)/d)):0;g[k]=f;used+=d*f}
+const net=gen-used;s.bat=net>=0?Math.min(cfg.b*25+20,s.bat+net*.92):Math.max(0,s.bat+net);
+const lf=g.life>=.99?1:0,hu=used-L[3][1]*g.heat;s.tin+=(L[3][1]*g.heat+.12*hu-U*(s.tin-Ta))/2;
+const o2m=oN?.2*g.oga*lf:0,sc=Math.min(s.co2,.25*g.scr*lf),pl=gl?g.gh*lf:0;
+s.o2=Math.max(0,s.o2+o2m-.14+.002*pl);s.h2o-=o2m*1.125;s.co2=Math.max(0,s.co2+.168-sc-.003*pl);
+const rc=.85*g.rec*lf;s.h2o+=-.58*(1-rc)-(.025*pl)+(s.ex?.5*site.ice*3*g.ex:0);
+s.food=Math.max(0,s.food-.1667+(pl&&s.tin>10&&s.h2o>0?.035:0));
+const ppm=s.co2/.36*1000,rate=.64*site.rad/24*SF[cfg.s]*(s.spe?40:1)*(s.spe&&s.sh?.25:1);s.dose+=rate;
+const d=(k,v)=>{s.dmg[k]=(s.dmg[k]||0)+v;s.hp-=v},bad=s.o2<=0?d('o2',8):0;
+if(ppm>15000)d('co2',2);else if(ppm>5000)d('co2',.1);if(s.tin<5)d('cold',.5);if(s.tin>35)d('heat',.3);if(s.food<=0)d('food',.1);if(s.h2o<=0)d('water',.4);if(rate>.4)d('rad',(rate-.4)*.5);if(s.dose>60)d('rad',.3);
+if(s.hp<100&&!bad&&ppm<5000&&s.tin>8&&s.food>0&&s.h2o>0&&rate<.4)s.hp=Math.min(100,s.hp+.05);
+fl('bo',g.life<.99,'BLACKOUT: life support lost power');fl('lowb',s.bat<cfg.b*25*.1,'Battery nearly empty');fl('co2',ppm>5000,'CO2 above 5000 ppm');fl('o2',s.o2<15,'Oxygen reserve low');fl('cold',s.tin<8,'Habitat is too cold');fl('h2o',s.h2o<40,'Water reserve low');fl('fd',s.food<20,'Food reserve low');
+s.last={gen,used,irr,Ta,ppm,rate};s.hist.push([gen,used,s.bat/(cfg.b*25+20),s.tau]);if(s.hist.length>96)s.hist.shift();s.t++}
+function frame(){if(!S||S.end)return;const n=[0,.5,2,10][speed];S.ph.a=(S.ph.a||0)+n;while(S.ph.a>=1&&!S.end){S.ph.a--;step();if(S.hp<=0||S.t>=DAYS*24){fin();return}}render()}
+const b=(l,v,m,u,bad)=>`<div class="card ${bad?'alert':''}"><div class="row"><span>${l}</span><b>${v}</b></div><div class="bar"><i style="width:${Math.max(0,Math.min(100,v/m*100))}%;background:${bad?'var(--wr)':'var(--ok)'}"></i></div><small>${u}</small></div>`;
+function render(){const s=S,l=s.last||{gen:0,used:0,irr:0,Ta:0,ppm:0,rate:0};
+$('#hd').textContent=`Sol ${Math.floor(s.t/24)+1}/${DAYS} · ${String(s.t%24).padStart(2,'0')}:00`;
+$('#st').innerHTML=`<div class="card ${s.storm?'alert':''}"><b>Environment</b><br>Dust opacity ${s.tau.toFixed(1)}${s.storm?' (storm)':''}<br>Sunlight ${Math.round(l.irr*100)}% · Outside ${l.Ta.toFixed(0)}°C<br>Radiation ${l.rate.toFixed(2)} mSv/h${s.spe?' <b class="A">SPIKE</b>':''}</div>`+
+b('Battery',Math.round(s.bat),cfg.b*25+20,`Making ${l.gen.toFixed(1)} kW, using ${l.used.toFixed(1)} kW`,s.bat<cfg.b*25*.15)+b('Oxygen',Math.round(s.o2),100,'kg in tanks',s.o2<20)+b('CO2',Math.round(l.ppm),15000,'ppm in cabin',l.ppm>5000)+b('Water',Math.round(s.h2o),300,'kg',s.h2o<40)+b('Food',Math.round(s.food),100,'crew-days',s.food<20)+b('Cabin temp',s.tin.toFixed(0),35,'°C',s.tin<8||s.tin>32)+b('Crew health',Math.round(s.hp),100,'average',s.hp<60)+b('Radiation meter',Math.round(s.dose),60,'game limit 60 (abstraction)',s.dose>40)+`<div class="card"><b>Systems</b><br>${['scr','oga','rec','heat'].map(k=>`${k}: ${s.fail[k]?'<b class="A">DOWN</b>':'ok'}`).join('<br>')}<br>Spare parts ${s.parts}${s.red?' · backup ready':''}</div>`;
+$('#log').innerHTML=s.log.slice(0,12).join('<br>');$('#bg').className=s.gh?'on':'';$('#bx').className=s.ex?'on':'';$('#bs').className=s.sh?'on':'';draw()}
+function draw(){const c=$('#cv'),x=c.getContext('2d'),H=S.hist,w=c.width,h=c.height;x.clearRect(0,0,w,h);const css=getComputedStyle(document.documentElement);x.strokeStyle=css.getPropertyValue('--bd');x.strokeRect(0,0,w,h);
+const ln=(i,sc,col)=>{x.strokeStyle=col;x.lineWidth=2;x.beginPath();H.forEach((p,k)=>{const X=k/95*w,Y=h-6-Math.min(1,p[i]/sc)*(h-12);k?x.lineTo(X,Y):x.moveTo(X,Y)});x.stroke()};
+ln(0,Math.max(4,cfg.p*4),'#8fd694');ln(1,Math.max(4,cfg.p*4),'#e8935f');ln(2,1,'#7fd0e8');ln(3,5,'#888')}
+function fin(){clearInterval(timer);S.end=1;const w=S.hp>0,k=Object.entries(S.dmg).sort((a,b)=>b[1]-a[1])[0],c=k?k[0]:'',
+LS={o2:['Oxygen ran out.','The oxygen maker needs power and water. A blackout or failed unit becomes an air emergency within hours; backups and batteries buy time.'],co2:['CO2 built up.','Scrubbers need power too. Air systems fail together when power fails.'],cold:['The habitat froze.','Heating is a big power load at night and in storms. Insulation and shielding cut it.'],heat:['The habitat overheated.','Thermal control works both ways.'],food:['Food ran out.','Greenhouses need power, light, water and warmth. Stored food has to cover the gap.'],water:['Water ran out.','Recycling, ice mining and smaller loads each stretch water at a cost in power or parts.'],rad:['Radiation exposure got too high.','Shielding trades water, power or mass for safety. Shelter during spikes matters.']},
+key=S.rec.filter(e=>/Dust storm|BLACKOUT|failed|Battery|CO2|Oxygen|cold|Solar particle/i.test(e[1])).slice(0,8).map(e=>`<li>Sol ${Math.floor(e[0]/24)+1}, ${String(e[0]%24).padStart(2,'0')}:00 — ${e[1]}</li>`).join('');
+A.innerHTML=`<h1>${w?'Mission complete':'Mission failed'}</h1><div class="card">${w?`<p>Your crew survived ${DAYS} sols. Final health ${Math.round(S.hp)}, radiation meter ${Math.round(S.dose)}/60, lowest-risk path found. Compare a different design on the same seed (${seed}).</p>`:`<p><b>${(LS[c]||['The crew did not survive.'])[0]}</b></p><p>What led to it:</p><ul>${key}</ul><p><b>Engineering lesson:</b> ${(LS[c]||['',''])[1]}</p>`}<small>Numbers are modeled; see the data labels on the start screen. Real inputs: Curiosity RAD radiation and SWIM ice maps.</small></div><p><button class="go" onclick="drawB()">Try again, same site</button> <button onclick="pick()">Choose another site</button></p>`}
+pick()
+</script></body></html>
